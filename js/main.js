@@ -1,9 +1,6 @@
 var canvas = document.getElementById("viewport");
 var context = canvas.getContext("2d");
 
-var jobs = [];
-var blocks = [];
-
 //////////////////////////////////////////////////////////////////
 ///////////////////////// CONSTRUCTORS ///////////////////////////
 
@@ -13,23 +10,47 @@ function Job(id, time, size){
     this.size = size;
 
     this.using = false;
+    this.waitingTime = 0;
+    this.internalFragmentation = 0;
 }
 
 function Memory(id, size){
     this.id = id;
     this.size = size;
 
-    this.jobQueue = [];
+    this.job = null;
 }
 
 //////////////////////////////////////////////////////////////////
 /////////////////////// INITIALIZITATION /////////////////////////
 var interval;
 
+var jobs = [];
+var blocks = [];
+var time = 0;
+var completedJobs = 0;
+var storageUsed = 0;
+var storageTotal = 0;
+
+var throughput = 0;
+var storageUtilization = 0;
+var waitingQueueLength = 0;
+var waitingTimeInQueue = 0;
+var aveInternalFragmentation = 0;
+
 function init(type){
     jobs = [];
     blocks = [];
+    time = 0;
+    completedJobs = 0;
+    storageUsed = 0;
+    storageTotal = 0;
 
+    throughput = 0;
+    storageUtilization = 0;
+    waitingQueueLength = 0;
+    waitingTimeInQueue = 0;
+    aveInternalFragmentation = 0;
 
     clearInterval(interval);
 
@@ -72,9 +93,6 @@ function init(type){
             interval = setInterval(function(){run("FIRST-FIT")},1000);
             break;
         case "WORSTFIT":
-            jobs.sort(function(a, b) {
-                return a.size - b.size;
-            });
             blocks.sort(function(a, b) {
                 return b.size - a.size;
             });
@@ -107,37 +125,56 @@ function renderUI(type){
 
 
     context.font = "15px Arial";
+    context.fillText("Block", 10, 100);
+    context.fillText("Job", 10 * 15, 100);
+    context.fillText("Time", 10 * (15 * 2), 100);
+    context.fillText("Internal Fragmentation", 10 * (15 * 3), 100);
+
+
+
     for(p = 0; p < blocks.length; p++){
 
-        if(blocks[p].jobQueue.length > 0)
+        if(blocks[p].job)
             context.fillStyle = "#FF2200";
         else
             context.fillStyle = "#00AAFF";
 
-        context.fillText("Block " + (blocks[p].id + 1) + " (" + blocks[p].size + ")", 10, 80+(p*20));
+        context.fillText("Block " + (blocks[p].id + 1) + " (" + blocks[p].size + ")", 10, 120+(p*20));
 
-        for(q = 0; q < blocks[p].jobQueue.length; q++){
-            if(q == 0)
-                context.fillStyle = "#00FF00";
-            else
-                context.fillStyle = "#FFFF00";
+        context.fillStyle = "#00FF00";
 
-            context.fillText("Job " + (blocks[p].jobQueue[q].id + 1), 10 * 15 * (q+1), 80+(p*20));
-            context.fillText("(" + blocks[p].jobQueue[q].time + ")", 10 * 15 * (q+1) + 60, 80+(p*20));
+        if(blocks[p].job){
+            context.fillText("Job " + (blocks[p].job.id + 1), 10 * 15, 120+(p*20));
+            context.fillText(blocks[p].job.time, 10 * (15*2), 120+(p*20));
+            context.fillText(blocks[p].job.internalFragmentation, 10 * (15*3), 120+(p*20));
         }
     }
     context.fillStyle = "#FFFF00";
     for(n=0, row=0, col=0; n < jobs.length; n++){
         if(!jobs[n].using && jobs[n].time > 0){
             context.fillText("Job " + (jobs[n].id + 1), 10 * 15 * (row) + 10, 450 + (col*20));
-            context.fillText("(" + jobs[n].size + ")", 10 * 15 * (row) + 60, 450 + (col*20));
+            context.fillText("(" + jobs[n].waitingTime + ")", 10 * 15 * (row) + 60, 450 + (col*20));
             row++;
-            if(row > 10){
+            if(row > 9){
                 row = 0;
                 col ++;
             }
         }
     }
+
+    context.font = "30px Arial";
+    context.fillStyle = "#FFFFFF";
+    context.fillText("Throughput: ", 10, 550);
+    context.fillText(throughput, 510, 550);
+    context.fillText("Storage Utilization: ", 10, 590);
+    context.fillText(storageUtilization, 510, 590);
+    context.fillText("Initial Waiting Queue Length: ", 10, 630);
+    context.fillText(waitingQueueLength, 510, 630);
+    // context.fillText("Waiting Time In Queue: ", 10, 670);
+    // context.fillText(waitingTimeInQueue, 510, 670);
+    // context.fillText("Internal Fragmentation: ", 10, 710);
+    // context.fillText(aveInternalFragmentation, 510, 710);
+
 }
 
 //////////////////////////////////////////////////////////////////
@@ -149,7 +186,9 @@ function findNewJob(i){
             if(jobs[n].size <= blocks[i].size){
                 if(!jobs[n].using){
                     jobs[n].using = true;
-                    blocks[i].jobQueue.push(jobs[n]);
+                    blocks[i].job = jobs[n];
+                    jobs[n].internalFragmentation = blocks[i].size - jobs[n].size;
+                    storageUsed += jobs[n].size;
                     break;
                 }
             }
@@ -157,21 +196,73 @@ function findNewJob(i){
     }
 }
 
-function run(type){
-    console.log(jobs);
+function findWaiting(){
+    w = 0;
+    for(n = 0; n < jobs.length; n++){
+        if(!jobs[n].using)
+            w++;
+    }
+
+    return w;
+}
+
+function incrementWaiting(){
+    for(n = 0; n < jobs.length; n++){
+        if(!jobs[n].using)
+            jobs[n].waitingTime++;
+    }
+}
+
+function findStorageTotal(){
+    var t = 0;
+
     for(i = 0; i < blocks.length; i++){
-        if(blocks[i].jobQueue.length > 0){
-            if(blocks[i].jobQueue[0].time == 1){
-                blocks[i].jobQueue[0].time--;
-                blocks[i].jobQueue[0].using = false;
-                blocks[i].jobQueue.shift();
+        t += blocks[i].size;
+    }
+
+    return t;
+}
+
+function isFinished(){
+    for(n = 0; n < jobs.length; n++){
+        if(jobs[n].using)
+            return false;
+    }
+
+    return true;
+}
+
+
+function run(type){
+    for(i = 0; i < blocks.length; i++){
+        if(blocks[i].job){
+            if(blocks[i].job.time == 1){
+                blocks[i].job.time--;
+                blocks[i].job.using = false;
+                blocks[i].job = null;
+                completedJobs ++;
                 findNewJob(i);
             } else {
-                blocks[i].jobQueue[0].time--;
+                blocks[i].job.time--;
             }
         } else {
             findNewJob(i);
         }
+    }
+    incrementWaiting();
+
+    if(time == 1){
+        //waitingQueueLength;
+        waitingQueueLength = findWaiting();
+    }
+    //throughput
+    throughput = completedJobs / time;
+    //storageUtilization
+    storageUtilization = findStorageTotal()/storageUsed * 100;
+
+
+    if(!isFinished()){
+        time ++;
     }
     renderUI(type);
 }
